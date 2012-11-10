@@ -19,9 +19,9 @@ require 'timeout'
   upload_server   = TCPServer.new(16001) and info("Upload   Server listening at 16001")
 
   def shutdown
-    download_server.shutdown
+    download_server.shutdown rescue nil
     info("Downlod server shutdown")
-    upload_server.shutdown
+    upload_server.shutdown rescue nil
     info("Upload  server shutdown")
     exit
   end
@@ -87,7 +87,7 @@ require 'timeout'
         when download_server
           process_client do
             client = download_server.accept
-            remote_ip = client.remote_address.ip_address
+            remote_ip = client.peeraddr[3]
 
             speed = calculate_speed do
               client.write(DATA)
@@ -98,7 +98,7 @@ require 'timeout'
         when upload_server
           process_client do
             client = upload_server.accept
-            remote_ip = client.remote_address.ip_address
+            remote_ip = client.peeraddr[3]
             speed = calculate_speed do
               client.read(SIZE)
               client.close
