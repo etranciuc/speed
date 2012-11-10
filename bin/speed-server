@@ -1,0 +1,115 @@
+#!/usr/bin/env ruby
+
+
+require 'daemons'
+
+Daemons.run_proc('speed-server') do
+require 'socket'
+require 'syslog'
+require 'timeout'
+  LOG = Syslog.open("speed-server", Syslog::LOG_CONS | Syslog::LOG_NDELAY | Syslog::LOG_PID, Syslog::LOG_DAEMON)
+  def info(*args)
+    LOG.log(Syslog::LOG_INFO,*args)
+  end
+
+  SIZE=1024*1024
+  File.open('/dev/urandom') { |f| DATA=f.read(SIZE) }
+
+  download_server = TCPServer.new(16000) and info("Download Server listening at 16000")
+  upload_server   = TCPServer.new(16001) and info("Upload   Server listening at 16001")
+
+  def shutdown
+    download_server.shutdown
+    info("Downlod server shutdown")
+    upload_server.shutdown
+    info("Upload  server shutdown")
+    exit
+  end
+
+  trap("INT"){ shutdown }
+  trap("QUIT"){ shutdown }
+  trap("TERM"){ shutdown }
+
+  def process_client
+    pid = fork do
+      yield
+      exit!
+    end
+    Process.detach(pid)
+  end
+
+  def calculate_speed
+    t1 = Time.now
+    yield
+    t2 = Time.now
+    Speed.new(SIZE/(t2-t1))
+  ensure
+  end
+
+  class Speed
+    def initialize(speed)
+      @speed = speed
+    end
+
+    def Bps  ; @speed               ; end
+    def bps  ; @speed*8             ; end
+    def kBps ; @speed/1024          ; end
+    def kbps ; @speed*8/1024        ; end
+    def mBps ; @speed/(1024*1024)   ; end
+    def mbps ; @speed*8/(1024*1024) ; end
+
+    def to_s
+      case @speed
+      when 0..1024
+        "%.3f bps" % [bps]
+      when 1024..(1024*1024)
+        "%.3f kbps" % [kbps]
+      else
+        "%.3f mbps" % [mbps]
+      end
+    end
+
+    # speed in bytes per second
+    def to_i
+      @speed
+    end
+
+    def bps
+      @speed * 8
+    end
+  end
+
+  loop do
+    begin
+      events = IO.select([download_server, upload_server])
+      events.first.each do |event|
+        case event
+        when download_server
+          process_client do
+            client = download_server.accept
+            remote_ip = client.remote_address.ip_address
+
+            speed = calculate_speed do
+              client.write(DATA)
+              client.close
+            end
+            info "#{remote_ip} Download speed: #{speed}"
+          end
+        when upload_server
+          process_client do
+            client = upload_server.accept
+            remote_ip = client.remote_address.ip_address
+            speed = calculate_speed do
+              client.read(SIZE)
+              client.close
+            end
+            info "#{remote_ip} Upload speed: #{speed}"
+          end
+        else
+          raise event.to_s
+        end
+      end
+    end
+  end
+
+end

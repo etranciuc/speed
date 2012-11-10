@@ -1,0 +1,85 @@
+#!/usr/bin/env ruby
+require 'socket'
+
+SIZE=1024*1024
+File.open('/dev/urandom') { |f| DATA=f.read(SIZE) }
+
+CFG_FILE=File.expand_path("~/.speed_test_host")
+
+host = nil
+if ARGV[0]
+  host = ARGV[0]
+  File.open(CFG_FILE,"w"){|f| f.write(ARGV[0]) }
+end
+
+if !host && File.file?(CFG_FILE)
+  host = File.read(CFG_FILE)
+end
+
+
+if !host
+  puts "Usage: speed [host] - After the first usage the host will be saved in ~/.speed_test_host and not asked again"
+  exit -1
+end
+
+
+class Speed
+  def initialize(speed)
+    @speed = speed
+  end
+
+  def Bps  ; @speed               ; end
+  def bps  ; @speed*8             ; end
+  def kBps ; @speed/1024          ; end
+  def kbps ; @speed*8/1024        ; end
+  def mBps ; @speed/(1024*1024)   ; end
+  def mbps ; @speed*8/(1024*1024) ; end
+
+  def to_s
+    case @speed
+    when 0..1024
+      "%.3f bps" % [bps]
+    when 1024..(1024*1024)
+      "%.3f kbps" % [kbps]
+    else
+      "%.3f mbps" % [mbps]
+    end
+  end
+
+  # speed in bytes per second
+  def to_i
+    @speed
+  end
+
+  def bps
+    @speed * 8
+  end
+end
+
+
+def calculate_speed
+  t1 = Time.now
+  yield
+  t2 = Time.now
+  Speed.new(SIZE/(t2-t1))
+ensure
+end
+
+begin
+  download_speed = calculate_speed do
+    socket = TCPSocket.new(host,16000)
+    socket.read(SIZE)
+  end
+
+  upload_speed = calculate_speed do
+    socket = TCPSocket.new(host,16001)
+    socket.write(DATA)
+  end
+rescue Errno::ECONNREFUSED
+  $stderr.puts "Impossible to connect to #{host}. Is the daemon running?"
+  exit
+end
+
+
+puts "#{download_speed.to_s} / #{upload_speed.to_s}"
+
